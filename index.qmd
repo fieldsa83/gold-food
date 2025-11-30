@@ -1,147 +1,114 @@
-::: {style="font-size: 14pt;font-weight: bold;margin-bottom: 10px; margin-top: 20px"}
-NASDAQ Weekly % Change Relative to Start of Year
-:::
-
 
 ```{r}
 #| echo: false
 #| warning: false
 #| message: false
 
-# Load the necessary libraries
+# Load necessary libraries
 library(quantmod)
 library(dplyr)
 library(plotly)
-library(scales) 
+library(cansim)
+library(lubridate)
 
-# Define the current year for dynamic filtering
-current_year <- 2025
+# --- 1. Get Monthly Gold (CAD) ---
+gold_symbol <- "GC=F"
+cad_symbol  <- "CAD=X"
 
-# 1. Get NASDAQ data starting from 2008
-df_hist_xts <- getSymbols("^IXIC", 
-                          from = "2008-01-01", 
-                          to = "2025-12-31",
-                          src = "yahoo", 
-                          auto.assign = FALSE)
+getSymbols(c(gold_symbol, cad_symbol), 
+           from = "2024-12-01", 
+           to = "2025-12-31", 
+           src = "yahoo", 
+           auto.assign = TRUE)
 
-# 2. Get the last trading day of each week
-weekly_endpoints <- endpoints(df_hist_xts, on = "weeks")
-last_day_of_week <- df_hist_xts[weekly_endpoints, ]
+daily_gold_cad <- Ad(get(gold_symbol)) * Ad(get(cad_symbol))
+monthly_gold_xts <- to.monthly(daily_gold_cad, indexAt = "firstof", OHLC = FALSE)
 
-# 3. Convert to a data.frame and add date columns
-df_with_dates <- data.frame(Date = index(last_day_of_week), 
-                            coredata(last_day_of_week)) %>%
-  mutate(
-    Year  = as.numeric(format(Date, "%Y")),
-    Month = as.numeric(format(Date, "%m")),
-    Week  = as.numeric(format(Date, "%V"))
-  )
-
-# 4. Group by year and calculate the change using backticks
-df_hist <- df_with_dates %>%
-  arrange(Year, Week) %>%
-  group_by(Year) %>%
-  mutate(
-    change_from_year_start = ((`IXIC.Adjusted` / first(`IXIC.Adjusted`)) - 1)*100
-  ) %>%
-  ungroup()
-
-# 5. Prepare the data for plotting
-df_historical_plain <- df_hist %>% filter(Year < current_year, Week <= 52)
-df_current_year <- df_hist %>% filter(Year == current_year)
-
-df_avg_historical <- df_historical_plain %>%
-  group_by(Week) %>%
-  summarise(avg_change = mean(change_from_year_start, na.rm = TRUE))
-
-# --- 6. Create the plot ---
-p <- plot_ly()
-
-# Add traces for all historical years
-p <- add_trace(p, 
-               data = df_historical_plain, # Using the plain data frame now
-               x = ~Week, 
-               y = ~change_from_year_start,
-               type = 'scatter', 
-               mode = 'lines', 
-               split = ~Year, 
-               line = list(color = 'grey', width = 1),
-               opacity = 0.3,
-               hoverinfo = "text",
-               text = ~paste(
-                 "Year:", Year, 
-                 "<br>Week:", Week, 
-                 "<br>Change:", round(change_from_year_start, 1),"%"
-               ),
-               showlegend = FALSE
+df_gold <- data.frame(
+  Date = as.Date(index(monthly_gold_xts)), 
+  Gold_Price_CAD = as.numeric(monthly_gold_xts)
 )
 
-# Add trace for the current year
-if(nrow(df_current_year) > 0) {
-  p <- add_trace(p, 
-                 data = df_current_year,
-                 x = ~Week, 
-                 y = ~change_from_year_start,
-                 type = 'scatter', 
-                 mode = 'lines',
-                 line = list(color = '#336699', width = 2),
-                 name = as.character(current_year),
-                 hoverinfo = "text",
-                 text = ~paste(
-                   "Year:", Year,
-                   "<br>Week:", Week, 
-                   "<br>Change:", round(change_from_year_start, 1),"%"
-                 )
-  )
-}
+# --- 2. Get CPI Data (StatCan v41690974) ---
+raw_cpi <- get_cansim_vector("v41690974", 
+                             start_time = "2025-01-01", 
+                             end_time = "2025-12-31")
 
-# Add trace for the historical average
-p <- add_trace(p, 
-               data = df_avg_historical,
-               x = ~Week, 
-               y = ~avg_change,
-               type = 'scatter', 
-               mode = 'lines',
-               line = list(color = 'darkred', width = 2, dash = 'dot'),
-               name = paste0("Average (", min(df_historical_plain$Year), "-", max(df_historical_plain$Year), ")"),
+df_cpi <- raw_cpi %>%
+  select(Date = REF_DATE, CPI = VALUE) %>%
+  mutate(Date = as.Date(Date))
+
+# --- 3. Merge & Calculate Metrics ---
+plot_data <- inner_join(df_gold, df_cpi, by = "Date") %>%
+  filter(Date >= "2025-01-01") %>%
+  arrange(Date) %>%
+  mutate(
+    Base_Gold = first(Gold_Price_CAD),
+    Base_CPI  = first(CPI),
+    Gold_Pct_Change = (Gold_Price_CAD / Base_Gold - 1) * 100,
+    CPI_Pct_Change  = (CPI / Base_CPI - 1) * 100,
+    Real_CPI_vs_Gold = CPI_Pct_Change - Gold_Pct_Change
+  )
+
+# --- 4. Create the Plotly Chart ---
+# Calculate a dynamic upper limit so the chart doesn't look cramped
+upper_limit <- max(plot_data$Real_CPI_vs_Gold, 2) + 1
+
+p <- plot_ly(data = plot_data, x = ~Date)
+
+p <- add_trace(p,
+               y = ~Real_CPI_vs_Gold,
+               type = 'scatter',
+               mode = 'lines',  # CHANGED: 'lines' only (removed +markers)
+               line = list(color = '#336699', width = 2),
+               name = "Real CPI (Gold Terms)",
                hoverinfo = "text",
                text = ~paste(
-                 "Year: Average",
-                 "<br>Week:", Week, 
-                 "<br>Change:", round(avg_change, 1),"%"
+                 "<b>Date:</b>", format(Date, "%b %Y"),
+                 "<br><b>Real Change:</b>", round(Real_CPI_vs_Gold, 2), "%",
+                 "<br><i>(CPI:", round(CPI_Pct_Change, 1), "% | Gold:", round(Gold_Pct_Change, 1), "%)</i>"
                )
 )
 
-
-
-# 7. Apply layout and configuration
 p <- p %>% layout(
-  #title = "NASDAQ Weekly Performance Since Start of Year",
+  title = list(text = "<b>Price of food down 30% since start of year</b><br><sup>(Change in food CPI indexed to Jan 2025 priced in gold)</sup>"),
   xaxis = list(
-    title = "Week",
-    range = c(0.5, 53),
+    title = "",
     showgrid = FALSE,
-    tickmode = "array",
-    tickvals = c(1, 10, 20, 30, 40, 50),
-    ticktext = c("1", "10", "20", "30", "40", "50")
+    tickformat = "%b %Y",
+    range=c("2024-12-01", "2025-11-01")
   ),
   yaxis = list(
-    title = "% Change",
-    #tickformat = ".0%", 
+    title = "Relative % Change (from Jan 2025)",
     showgrid = TRUE,
-    gridcolor = "#e5e5e5"
+    gridcolor = "#e5e5e5",
+    zeroline = TRUE,
+    zerolinecolor = "black",
+    zerolinewidth = 1,
+    range = c(-40.1, upper_limit)
   ),
-  showlegend = TRUE,
-  legend = list(orientation = "h", y = 1.1),
+  showlegend = FALSE,
   hovermode = "closest",
-  plot_bgcolor = "white"
-) %>%
-  config(
-    displayModeBar = FALSE 
+  plot_bgcolor = "white",
+  # Increase bottom margin to fit the citation
+  margin = list(b = 80), 
+  annotations = list(
+    list(
+      x = 0,
+      y = -0.15, # Position below the X-axis
+      text = "Source: Yahoo Finance (Gold Price) and Statistics Canada, Consumer Price Index (Table 18-10-0004-01)",
+      showarrow = FALSE,
+      xref = 'paper',
+      yref = 'paper',
+      xanchor = 'left',
+      yanchor = 'auto',
+      font = list(size = 10, color = "gray")
+    )
   )
-# REMOVED: The highlight() pipe was causing the performance issues.
+) %>%
+  config(displayModeBar = FALSE)
 
-# Display the final plot
+# Display
 p
 
 
