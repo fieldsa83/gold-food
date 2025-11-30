@@ -72,7 +72,7 @@ p <- add_trace(p,
 )
 
 p <- p %>% layout(
-  title = list(text = "<b>Cost of food down 30% since start of year</b><br><sup>(Change in CPI for food indexed to Jan 2025 priced in gold)</sup>"),
+  title = list(text = "<b>Cost of food down 30% since start of year</b><br><sup>(Change in CPI for food priced in gold)</sup>"),
   xaxis = list(
     title = "",
     showgrid = FALSE,
