@@ -85,7 +85,7 @@ p <- p %>% layout(
     zeroline = TRUE,
     zerolinecolor = "black",
     zerolinewidth = 1,
-    range = c(-40.1, upper_limit)
+    range = c(-40.1, 4.9)
   ),
   showlegend = FALSE,
   hovermode = "closest",
