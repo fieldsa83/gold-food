@@ -15,14 +15,15 @@ library(lubridate)
 gold_symbol <- "GC=F"
 cad_symbol  <- "CAD=X"
 
-getSymbols(c(gold_symbol, cad_symbol), 
-           from = "2024-12-01", 
-           to = "2025-12-31", 
-           src = "yahoo", 
-           auto.assign = TRUE)
+invisible(getSymbols(c(gold_symbol, cad_symbol), 
+                     from = "2024-12-01", 
+                     to = "2025-12-31", 
+                     src = "yahoo", 
+                     auto.assign = TRUE))
 
 daily_gold_cad <- Ad(get(gold_symbol)) * Ad(get(cad_symbol))
 monthly_gold_xts <- to.monthly(daily_gold_cad, indexAt = "firstof", OHLC = FALSE)
+
 
 df_gold <- data.frame(
   Date = as.Date(index(monthly_gold_xts)), 
